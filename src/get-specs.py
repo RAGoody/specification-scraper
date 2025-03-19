@@ -33,6 +33,7 @@ def sendtoGemini(data):
     Returns:
         str: The parsed JSON response from the Gemini API.
     """
+    enablePause = False
     prompt = """break down this '""" + data + """'into specifications
 
     Use this JSON schema:
@@ -58,10 +59,11 @@ def sendtoGemini(data):
         json_response = "{}"  # Return empty JSON if delimiters are not found
 
     # Prompt the user to continue or not
-    user_input = input("Do you want to continue? (Y/N): ")
-    if user_input.strip().upper() != 'Y':
-        print("Program execution stopped by user.")
-        sys.exit(0)  # Exit the program if the user types 'N'
+    if enablePause == True:
+        user_input = input("Do you want to continue? (Y/N): ")
+        if user_input.strip().upper() != 'Y':
+            print("Program execution stopped by user.")
+            sys.exit(0)  # Exit the program if the user types 'N'
     
     # Return the parsed JSON response
     return json_response
