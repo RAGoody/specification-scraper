@@ -1,11 +1,13 @@
 import os
 import sys
 import csv
+import re
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from google import genai
 import json  # Import json module
+import time  # Import time module for adding delays
 
 load_dotenv()  # Load variables from .env file
 
@@ -38,23 +40,36 @@ def sendtoGemini(data):
 
     Use this JSON schema:
 
-    Specs = {'equipment_name': str, 'specifications': list[str]}
-    Return: list[Specs]"""
+    Specs = {
+        'equipment_name': str,
+        'specifications': {
+                'specificationSection' : {
+                        specificationName:specificationValue
+                    }
+            }
+    }
+    Return: Specs"""
+
     print(f"{prompt}")    
     client = genai.Client(api_key=API_KEY)
     response = client.models.generate_content(
-        model='gemini-2.0-flash',
+        model='gemini-1.5-flash',
         contents=prompt,
     )
     print(f"")
     print(f"")
     print(f"{response.text}")
     
-    # Extract JSON from the response text
-    start_index = response.text.find("```json")
-    end_index = response.text.find("```", start_index + 6)
+    # Remove all escaped characters and new line characters from the response text
+    cleaned_response_text = response.text.replace('n\n', '')
+    cleaned_response_text = response.text.replace('\n', '')
+    cleaned_response_text = response.text.replace('\"', '"')
+
+    # Extract JSON from the cleaned response text
+    start_index = cleaned_response_text.find("```json")
+    end_index = cleaned_response_text.find("```", start_index + 6)
     if start_index != -1 and end_index != -1:
-        json_response = response.text[start_index + 6:end_index].strip()
+        json_response = cleaned_response_text[start_index + 6:end_index].strip()
     else:
         json_response = "{}"  # Return empty JSON if delimiters are not found
 
@@ -112,12 +127,46 @@ def extract_text(html_content):
     text = '\n'.join(chunk for chunk in chunks if chunk)  # Rejoin with newlines and filter out empty chunks.
     return text
 
-def process_csv(csv_filepath):
+def pause_with_countdown(seconds):
+    """
+    Pauses execution for a specified number of seconds with a countdown display.
+    
+    Args:
+        seconds (int): The number of seconds to pause.
+    """
+    for remaining in range(seconds, 0, -1):
+        print(f"Waiting {remaining} seconds...", end="\r")
+        time.sleep(1)
+    print(" " * 30, end="\r")  # Clear the line after countdown
+
+def clean_json_data(data):
+    """
+    Cleans the data to ensure it is JSON-compatible by removing invalid characters.
+    
+    Args:
+        data (str): The raw data to clean.
+    
+    Returns:
+        str: The cleaned JSON-compatible data.
+    """
+    # Remove non-printable characters and control characters
+    data = re.sub(r'[^\x20-\x7E]', '', data)  # Keeps only printable ASCII characters
+
+    # Escape invalid JSON characters
+    try:
+        json.loads(data)  # Validate if the data is already valid JSON
+    except json.JSONDecodeError:
+        data = json.dumps(data)  # Escape invalid characters if not valid JSON
+
+    return data
+
+def process_csv(csv_filepath, timeToPause):
     """
     Reads URLs from a CSV and processes each webpage.
     
     Args:
         csv_filepath (str): The file path of the CSV file containing URLs.
+        timeToPause (int): The number of seconds to pause between processing each line.
     """
     counter = 0
     results = []  # Initialize a list to collect results
@@ -147,10 +196,11 @@ def process_csv(csv_filepath):
                             results.append({"url": url, "error": "Failed to fetch"})
                     if extracted_text:      
                         specData = sendtoGemini(extracted_text)
+                        specData = clean_json_data(specData)  # Clean the data
                         specFileName = "./data/results/" + make + "_specs_" + url.replace("://", "_").replace("/", "_") + ".json"  # Create safe json filename
                         with open(specFileName, 'w', encoding='utf-8') as outfile:
                             outfile.write(specData)
-                            results.append({"url": url, "specData": specData})  # Collect the specData
+                            results.append({"url": url, "specData": specData})  # Collect the cleaned specData
                     else:
                         print(f"No extractable text found on {url}")
                         results.append({"url": url, "error": "No extractable text found"})
@@ -159,11 +209,14 @@ def process_csv(csv_filepath):
                     results.append({"url": None, "error": "URL not found in row"})
                 counter += 1
 
-                # Write results to JSON file every 10 lines
-                if counter % 10 == 0:
+                # Write results to JSON file every 2 lines
+                if counter % 2 == 0:
                     with open("./data/results/generated-specifications.json", 'w', encoding='utf-8') as jsonfile:
                         json.dump(results, jsonfile, ensure_ascii=False, indent=4)
                     results = []  # Reset results list
+
+                # Pause for timeToPause seconds after processing each line
+                pause_with_countdown(timeToPause)
 
             # Write any remaining results to JSON file
             if results:
@@ -178,5 +231,9 @@ def process_csv(csv_filepath):
         print(f"An unexpected error occurred: {e}")
 
 if __name__ == "__main__":
-    csv_file = "./data/locations/urls.csv"  # Replace with your CSV filename
-    process_csv(csv_file)
+    csv_file = "./data/locations/urls.csv"  # Default CSV file to process
+
+    # Accept timeToPause as a CLI argument, default to 60 seconds if not provided
+    timeToPause = int(sys.argv[1]) if len(sys.argv) > 1 else 60
+
+    process_csv(csv_file, timeToPause)
