@@ -35,7 +35,6 @@ def sendtoGemini(data):
     Returns:
         str: The parsed JSON response from the Gemini API.
     """
-    enablePause = False
     prompt = """break down this '""" + data + """'into specifications
 
     Use this JSON schema:
@@ -43,9 +42,11 @@ def sendtoGemini(data):
     Specs = {
         'equipment_name': str,
         'specifications': {
-                'specificationSection' : {
-                        specificationName:specificationValue
-                    }
+                'section' : 
+                    sectionName:'specificationSectionName',
+                    sectionSpecs: [
+                        {name:'specificationName', value:'specificationValue'}
+                    ]
             }
     }
     Return: Specs"""
@@ -60,10 +61,11 @@ def sendtoGemini(data):
     print(f"")
     print(f"{response.text}")
     
+    # Remove the first character "n" if it exists
+    cleaned_response_text = response.text.lstrip("n")
+
     # Remove all escaped characters and new line characters from the response text
-    cleaned_response_text = response.text.replace('n\n', '')
-    cleaned_response_text = response.text.replace('\n', '')
-    cleaned_response_text = response.text.replace('\"', '"')
+    cleaned_response_text = cleaned_response_text.replace('\n', '').replace('\"', '"')
 
     # Extract JSON from the cleaned response text
     start_index = cleaned_response_text.find("```json")
@@ -73,13 +75,6 @@ def sendtoGemini(data):
     else:
         json_response = "{}"  # Return empty JSON if delimiters are not found
 
-    # Prompt the user to continue or not
-    if enablePause == True:
-        user_input = input("Do you want to continue? (Y/N): ")
-        if user_input.strip().upper() != 'Y':
-            print("Program execution stopped by user.")
-            sys.exit(0)  # Exit the program if the user types 'N'
-    
     # Return the parsed JSON response
     return json_response
 
@@ -121,7 +116,7 @@ def extract_text(html_content):
     for script in soup(["script", "style"]):
         script.extract()
 
-    text = soup.get_text(separator='\n')  # Use newline as separator for better readability
+    text = soup.get_text()  # Use newline as separator for better readability  separator='\n'
     lines = (line.strip() for line in text.splitlines())  # Remove empty lines and leading/trailing whitespace
     chunks = (phrase.strip() for line in lines for phrase in line.split("  "))  # Remove extra spaces
     text = '\n'.join(chunk for chunk in chunks if chunk)  # Rejoin with newlines and filter out empty chunks.
@@ -160,7 +155,7 @@ def clean_json_data(data):
 
     return data
 
-def process_csv(csv_filepath, timeToPause):
+def process_csv(csv_filepath, timeToPause, enablePause):
     """
     Reads URLs from a CSV and processes each webpage.
     
@@ -196,11 +191,20 @@ def process_csv(csv_filepath, timeToPause):
                             results.append({"url": url, "error": "Failed to fetch"})
                     if extracted_text:      
                         specData = sendtoGemini(extracted_text)
-                        specData = clean_json_data(specData)  # Clean the data
+                        
+                        # Remove the single "n" at the start of specData if it exists
+                        specData = specData.lstrip("n")
+                        
+                        # Parse specData as JSON before appending to results
+                        try:
+                            specData_json = json.loads(specData)
+                        except json.JSONDecodeError:
+                            specData_json = {"error": "Invalid JSON format in specData"}
+                        
                         specFileName = "./data/results/" + make + "_specs_" + url.replace("://", "_").replace("/", "_") + ".json"  # Create safe json filename
                         with open(specFileName, 'w', encoding='utf-8') as outfile:
-                            outfile.write(specData)
-                            results.append({"url": url, "specData": specData})  # Collect the cleaned specData
+                            json.dump(specData_json, outfile, ensure_ascii=False, indent=4)
+                        results.append({"url": url, "specData": specData_json})  # Append as JSON object
                     else:
                         print(f"No extractable text found on {url}")
                         results.append({"url": url, "error": "No extractable text found"})
@@ -213,7 +217,13 @@ def process_csv(csv_filepath, timeToPause):
                 if counter % 2 == 0:
                     with open("./data/results/generated-specifications.json", 'w', encoding='utf-8') as jsonfile:
                         json.dump(results, jsonfile, ensure_ascii=False, indent=4)
-                    results = []  # Reset results list
+
+                # Prompt the user to continue or not
+                if enablePause == True:
+                    user_input = input("Do you want to continue? (Y/N): ")
+                    if user_input.strip().upper() != 'Y':
+                        print("Program execution stopped by user.")
+                        sys.exit(0)  # Exit the program if the user types 'N'
 
                 # Pause for timeToPause seconds after processing each line
                 pause_with_countdown(timeToPause)
@@ -235,5 +245,19 @@ if __name__ == "__main__":
 
     # Accept timeToPause as a CLI argument, default to 60 seconds if not provided
     timeToPause = int(sys.argv[1]) if len(sys.argv) > 1 else 60
+    enablePause = bool(sys.argv[2]) if len(sys.argv) > 2 else False
 
-    process_csv(csv_file, timeToPause)
+    process_csv(csv_file, timeToPause, enablePause)
+
+    # Open and display the generated-specifications.json file
+    generated_file = "./data/results/generated-specifications.json"
+    try:
+        with open(generated_file, 'r', encoding='utf-8') as jsonfile:
+            content = json.load(jsonfile)  # Load JSON content
+            print(json.dumps(content, indent=4, ensure_ascii=False))  # Pretty-print JSON content
+    except FileNotFoundError:
+        print(f"File not found: {generated_file}")
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON from {generated_file}: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred while opening {generated_file}: {e}")
