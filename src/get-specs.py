@@ -35,19 +35,23 @@ def sendtoGemini(data):
     Returns:
         str: The parsed JSON response from the Gemini API.
     """
-    prompt = """break down this '""" + data + """'into specifications
+    prompt = """break down this '""" + data + """' into specifications
 
     Use this JSON schema:
 
-    Specs = {
-        'equipment_name': str,
-        'specifications': {
-                'section' : 
-                    sectionName:'specificationSectionName',
-                    sectionSpecs: [
-                        {name:'specificationName', value:'specificationValue'}
-                    ]
+    {
+        "equipment_name": "string",
+        "specifications": {
+            "section": {
+                "sectionName": "specificationSectionName",
+                "sectionSpecs": [
+                    {
+                        "name": "specificationName",
+                        "value": "specificationValue"
+                    }
+                ]
             }
+        }
     }
     Return: Specs"""
 
